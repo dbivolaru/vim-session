@@ -1,6 +1,8 @@
 # Extended session management for Vim
 
-The vim-session plug-in improves upon [Vim](http://www.vim.org/)'s built-in [:mksession][mksession] command by enabling you to easily and (if you want) automatically persist and restore your Vim editing sessions. It works by generating a [Vim script](http://vimdoc.sourceforge.net/htmldoc/usr_41.html#script) that restores your current settings and the arrangement of tab pages and/or split windows and the files they contain.
+The vim-session plug-in improves upon [Vim](http://www.vim.org/)'s built-in [:mksession][mksession] command by enabling you to easily and (if you want) automatically persist and restore your Vim editing sessions. It works by generating a [Vim9 script](https://vimhelp.org/usr_41.txt.html#script) that restores your current settings and the arrangement of tab pages and/or split windows and the files they contain.
+
+Since May 31, 2026 the `:mksession`, `:mkview`, and `:mkvimrc` commands were changed to generate Vim9 script (ref Vim 9.2.0579). The plugin should properly restore any legacy sessions, but will save any new sessions in Vim9 script. Forked from xolox/vim-session, originally written by Peter Odding, Ingo Karkat and contributors.
 
 To persist your current editing session you can execute the `:SaveSession` command. If you don't provide a name for the session 'default' is used (you can change this name with an option). You're free to use whatever characters you like in session names. When you want to restore your session simply execute `:OpenSession`. Again the name 'default' is used if you don't provide one. When a session is active, has been changed and you quit Vim you'll be prompted whether you want to save the open session before quitting Vim:
 
@@ -534,7 +536,12 @@ If you have questions, bug reports, suggestions, etc. the author can be contacte
 This software is licensed under the [MIT license](http://en.wikipedia.org/wiki/MIT_License).
 © 2015 Peter Odding &lt;<peter@peterodding.com>&gt; and Ingo Karkat.
 
+Modifications to this fork:
+© 2026 Dorian Bivolaru.
+
 Thanks go out to everyone who has helped to improve the vim-session plug-in (whether through pull requests, bug reports or personal e-mails).
+
+See LICENSE.md for the full license text.
 
 ## Sample session script
 

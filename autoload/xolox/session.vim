@@ -1,10 +1,24 @@
 " Public API for the vim-session plug-in.
 "
 " Author: Peter Odding
-" Last Change: November 1, 2015
-" URL: http://peterodding.com/code/vim/session/
+" Maintainer: Dorian Bivolaru
+" Last Change: August 23, 2026
+" Original: https://github.com/xolox/vim-session/
+" Fork: https://github.com/dbivolaru/vim-session/
 
-let g:xolox#session#version = '2.13.1'
+let g:xolox#session#version = '3.0.0'
+
+function! s:mksession_uses_vim9()
+  return has('patch-9.2.0579')
+endfunction
+
+function! s:emit_comment(text)
+  return (s:mksession_uses_vim9() ? '# ' : '" ') . a:text
+endfunction
+
+function! s:emit_setopt(optname, text)
+  return (s:mksession_uses_vim9() ? '&' . a:optname . ' = ''' . a:text . '''': 'set ' . a:optname . '=' . a:text)
+endfunction
 
 " Public API for session persistence. {{{1
 
@@ -25,13 +39,17 @@ function! xolox#session#save_session(commands, filename) " {{{2
   " [:mksession]: http://vimdoc.sourceforge.net/htmldoc/starting.html#:mksession
   " [:source]: http://vimdoc.sourceforge.net/htmldoc/repeat.html#:source
   let is_all_tabs = xolox#session#include_tabs()
-  call add(a:commands, '" ' . a:filename . ':')
-  call add(a:commands, '" Vim session script' . (is_all_tabs ? '' : ' for a single tab page') . '.')
-  call add(a:commands, '" Created by session.vim ' . g:xolox#session#version . ' on ' . strftime('%d %B %Y at %H:%M:%S.'))
-  call add(a:commands, '" Open this file in Vim and run :source % to restore your session.')
+  let vim9 = s:mksession_uses_vim9()
+  if vim9
+    call add(a:commands, 'vim9script')
+  end
+  call add(a:commands, s:emit_comment(a:filename . ':'))
+  call add(a:commands, s:emit_comment('Vim session script' . (is_all_tabs ? '' : ' for a single tab page') . '.'))
+  call add(a:commands, s:emit_comment('Created by session.vim ' . g:xolox#session#version . ' on ' . strftime('%d %B %Y at %H:%M:%S.')))
+  call add(a:commands, s:emit_comment('Open this file in Vim and run :source % to restore your session.'))
   call add(a:commands, '')
   if &verbose >= 1
-    call add(a:commands, 'set verbose=' . &verbose)
+    call add(a:commands, s:emit_setopt('verbose', &verbose))
   endif
   " We save the GUI options only for global sessions, not for tab scoped
   " sessions. Also, if the Vim we're currently running in doesn't have GUI
@@ -39,9 +57,9 @@ function! xolox#session#save_session(commands, filename) " {{{2
   " this value if the user didn't specifically set it! Otherwise the next time
   " the session is restored in a GUI Vim, things will look funky :-).
   if has('gui') && is_all_tabs
-    call add(a:commands, 'set guioptions=' . escape(&go, ' "\'))
+    call add(a:commands, s:emit_setopt('guioptions', escape(&go, ' "\')))
     if xolox#misc#option#get('session_persist_font', 1)
-      call add(a:commands, 'silent! set guifont=' . escape(&gfn, ' "\'))
+      call add(a:commands, 'silent! ' . s:emit_setopt('guifont', escape(&gfn, ' "\')))
     endif
   endif
   call xolox#session#save_globals(a:commands)
@@ -57,13 +75,25 @@ function! xolox#session#save_session(commands, filename) " {{{2
     call xolox#session#save_fullscreen(a:commands)
     call add(a:commands, 'doautoall SessionLoadPost')
   else
-    call add(a:commands, 'let s:winrestcmd = winrestcmd()')
+    if vim9
+      call add(a:commands, 'var xolox_winrestcmd = winrestcmd()')
+    else
+      call add(a:commands, 'let s:winrestcmd = winrestcmd()')
+    endif
     call add(a:commands, 'windo doautocmd SessionLoadPost')
     call s:jump_to_window(a:commands, tabpagenr(), winnr())
-    call add(a:commands, 'silent! execute s:winrestcmd')
+    if vim9
+      call add(a:commands, 'silent! execute xolox_winrestcmd')
+    else
+      call add(a:commands, 'silent! execute s:winrestcmd')
+    endif
   endif
-  call add(a:commands, 'unlet SessionLoad')
-  call add(a:commands, '" vim: ft=vim ro nowrap smc=128')
+  if vim9
+    call add(a:commands, 'unlet g:SessionLoad')
+  else
+    call add(a:commands, 'unlet SessionLoad')
+  endif
+  call add(a:commands, s:emit_comment('vim: ft=vim ro nowrap smc=128'))
 endfunction
 
 function! xolox#session#save_globals(commands) " {{{2
@@ -177,12 +207,16 @@ function! xolox#session#save_state(commands) " {{{2
     set ssop-=options
     execute 'mksession' fnameescape(tempfile)
     let lines = readfile(tempfile)
+    " Remove the vim9script marker because we will add our own.
+    call s:eat_leading_line(lines, 'vim9script')
     " Remove the mode line added by :mksession because we'll add our own in
     " xolox#session#save_session().
     call s:eat_trailing_line(lines, '" vim: set ft=vim :')
+    call s:eat_trailing_line(lines, '# vim: set ft=vim :') " Vim9 script
     " Remove the "SessionLoadPost" event firing at the end of the :mksession
     " output. We will fire the event ourselves when we're really done.
     call s:eat_trailing_line(lines, 'unlet SessionLoad')
+    call s:eat_trailing_line(lines, 'unlet g:SessionLoad') " Vim9 script
     call s:eat_trailing_line(lines, 'doautoall SessionLoadPost')
     call xolox#session#save_special_windows(lines)
     if !xolox#session#include_tabs()
@@ -192,11 +226,20 @@ function! xolox#session#save_state(commands) " {{{2
     endif
     call extend(a:commands, map(lines, 's:state_filter(v:val)'))
     " Re-implement Vim's special handling of the initial, empty buffer.
-    call add(a:commands, "if exists('s:wipebuf')")
-    call add(a:commands, "  if empty(bufname(s:wipebuf))")
-    call s:cleanup_after_plugin(a:commands, 's:wipebuf')
-    call add(a:commands, "  endif")
-    call add(a:commands, "endif")
+    let vim9 = s:mksession_uses_vim9()
+    if vim9
+      call add(a:commands, "if wipebuf != -1")
+      call add(a:commands, "  if empty(bufname(wipebuf))")
+      call s:cleanup_after_plugin(a:commands, 'wipebuf')
+      call add(a:commands, "  endif")
+      call add(a:commands, "endif")
+    else
+      call add(a:commands, "if exists('s:wipebuf')")
+      call add(a:commands, "  if empty(bufname(s:wipebuf))")
+      call s:cleanup_after_plugin(a:commands, 's:wipebuf')
+      call add(a:commands, "  endif")
+      call add(a:commands, "endif")
+    endif
     return 1
   finally
     let &sessionoptions = ssop_save
@@ -211,6 +254,13 @@ function! s:eat_trailing_line(session, line) " {{{3
   endif
 endfunction
 
+function! s:eat_leading_line(session, line) " {{{3
+  " Remove matching, leading strings from a list of strings.
+  if a:session[0] == a:line
+    call remove(a:session, 0)
+  endif
+endfunction
+
 function! s:tabpage_filter(buffers, line) " {{{3
   " Change output of :mksession if for single tab page.
   if a:line =~ '^badd +\d\+ '
@@ -221,12 +271,14 @@ function! s:tabpage_filter(buffers, line) " {{{3
     let pathname = matchstr(a:line, '^badd +\d\+ \zs.*')
     let bufnr = bufnr('^' . pathname . '$')
     if index(a:buffers, bufnr) == -1
-      return '" ' . a:line
+      return s:emit_comment(a:line)
     endif
-  elseif a:line =~ '^let v:this_session\s*='
+  elseif a:line =~ '^\%(let \)\?v:this_session\s*='
     " The :mksession command unconditionally adds the global v:this_session
     " variable definition to the session script, but we want a differently
     " scoped variable for tab scoped sessions.
+    " Modern vim generates v:this_session = expand("<sfile>:p"), so the regexp
+    " would take care of both cases
     return substitute(a:line, 'v:this_session', 't:this_session', 'g')
   endif
   " Preserve all other lines.
@@ -241,19 +293,21 @@ function! s:state_filter(line) " {{{3
   elseif a:line =~ '^file .\{-}\<NERD_tree_\d\+$'
     " Silence "E95: Buffer with this name already exists" when restoring
     " mirrored NERDTree windows.
-    return '" ' . a:line
+    return s:emit_comment(a:line)
   elseif a:line =~ '^file .\{-}\[BufExplorer\]$'
     " Same trick (about the E95) for BufExplorer.
-    return '" ' . a:line
+    return s:emit_comment(a:line)
   elseif a:line =~ '^file .\{-}__Tag_List__$'
     " Same trick (about the E95) for TagList.
-    return '" ' . a:line
-  elseif a:line =~ "^\\s*silent exe 'bwipe ' \\. s:wipebuf$" || a:line =~ '^unlet! s:wipebuf$'
+    return s:emit_comment(a:line)
+  elseif a:line =~ "^\\s*silent exe 'bwipe ' \\. s:wipebuf$"
+        \ || a:line =~ '^unlet! s:wipebuf$'
+        \ || a:line =~ "^\\s*silent exe 'bwipe ' \\.\\. wipebuf$"
     " Disable Vim's special handling of the initial, empty buffer because it
     " breaks restoring of special windows with content generated by a Vim
     " plug-in. The :mksession command doesn't have this problem because it
     " simply doesn't support buffers with generated contents...
-    return '" ' . a:line
+    return s:emit_comment(a:line)
   else
     return a:line
   endif
@@ -267,9 +321,9 @@ function! xolox#session#save_special_windows(session) " {{{2
   let window = winnr()
   let s:nerdtrees = {}
   call add(a:session, '')
-  call add(a:session, '" Support for special windows like quick-fix and plug-in windows.')
-  call add(a:session, '" Everything down here is generated by vim-session (not supported')
-  call add(a:session, '" by :mksession out of the box).')
+  call add(a:session, s:emit_comment('Support for special windows like quick-fix and plug-in windows.'))
+  call add(a:session, s:emit_comment('Everything down here is generated by vim-session (not supported'))
+  call add(a:session, s:emit_comment('by :mksession out of the box).'))
   call add(a:session, '')
   try
     if xolox#session#include_tabs()
@@ -333,8 +387,13 @@ function! s:check_special_window(session)
   endif
   if exists('command')
     call s:jump_to_window(a:session, tabpagenr(), winnr())
-    call add(a:session, 'let s:bufnr_save = bufnr("%")')
-    call add(a:session, 'let s:cwd_save = getcwd()')
+    if vim9
+      call add(a:session, 'var xolox_bufnr_save: number = bufnr("%")')
+      call add(a:session, 'var xolox_cwd_save: string = getcwd()')
+    else
+      call add(a:session, 'let s:bufnr_save = bufnr("%")')
+      call add(a:session, 'let s:cwd_save = getcwd()')
+    endif
     if argument == ''
       call add(a:session, command)
     else
@@ -346,14 +405,20 @@ function! s:check_special_window(session)
       endif
       call add(a:session, command . ' ' . fnameescape(argument))
     endif
-    call s:cleanup_after_plugin(a:session, 's:bufnr_save')
-    call add(a:session, 'execute "cd" fnameescape(s:cwd_save)')
+    if vim9
+      call s:cleanup_after_plugin(a:session, 'xolox_bufnr_save')
+      call add(a:session, 'execute "cd" fnameescape(xolox_cwd_save)')
+    else
+      call s:cleanup_after_plugin(a:session, 's:bufnr_save')
+      call add(a:session, 'execute "cd" fnameescape(s:cwd_save)')
+    endif
     return 1
   endif
 endfunction
 
 function! s:jump_to_window(session, tabpage, window)
-  call add(a:session, a:window . 'wincmd w')
+  " Adding a prefixed colon makes this work on both legacy and Vim9 script
+  call add(a:session, ':' . a:window . 'wincmd w')
   if xolox#session#include_tabs()
     call add(a:session, 'tabnext ' . a:tabpage)
   endif
@@ -369,12 +434,18 @@ function! s:nerdtree_persist()
 endfunction
 
 function! s:cleanup_after_plugin(commands, bufnr_var)
-  call add(a:commands, "if !getbufvar(" . a:bufnr_var . ", '&modified')")
-  call add(a:commands, "  let s:wipebuflines = getbufline(" . a:bufnr_var . ", 1, '$')")
-  call add(a:commands, "  if len(s:wipebuflines) <= 1 && empty(get(s:wipebuflines, 0, ''))")
-  call add(a:commands, "    silent execute 'bwipeout' " . a:bufnr_var)
-  call add(a:commands, "  endif")
-  call add(a:commands, "endif")
+  let vim9 = s:mksession_uses_vim9()
+  call add(a:commands,   "if !getbufvar(" . a:bufnr_var . ", '&modified')")
+  if vim9
+    call add(a:commands, "  var wipebuflines = getbufline(" . a:bufnr_var . ", 1, '$')")
+    call add(a:commands, "  if len(wipebuflines) <= 1 && empty(get(wipebuflines, 0, ''))")
+  else
+    call add(a:commands, "  let s:wipebuflines = getbufline(" . a:bufnr_var . ", 1, '$')")
+    call add(a:commands, "  if len(s:wipebuflines) <= 1 && empty(get(s:wipebuflines, 0, ''))")
+  endif
+  call add(a:commands,   "    silent execute 'bwipeout' " . a:bufnr_var)
+  call add(a:commands,   "  endif")
+  call add(a:commands,   "endif")
 endfunction
 
 " Automatic commands to manage the default session. {{{1

@@ -829,7 +829,7 @@ session. If you like the script please vote for it on Vim Online [17].
 License ~
 
 This software is licensed under the MIT license [18]. © 2015 Peter Odding
-<peter@peterodding.com> and Ingo Karkat.
+<peter@peterodding.com> and Ingo Karkat. Modifications © 2026 Dorian Bivolaru.
 
 Thanks go out to everyone who has helped to improve the vim-session plug-in
 (whether through pull requests, bug reports or personal e-mails).
